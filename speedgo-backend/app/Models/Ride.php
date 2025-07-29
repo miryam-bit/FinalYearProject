@@ -19,6 +19,7 @@ class Ride extends Model
         'payment_method',
         'status',
         'scheduled_at',
+        'driver_id',
     ];
 
     protected $casts = [
@@ -30,5 +31,10 @@ class Ride extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function driver()
+    {
+        return $this->belongsTo(User::class, 'driver_id');
     }
 }

@@ -15,15 +15,6 @@ class AuthController extends Controller
 {public function register(Request $request)
     {
         try {
-            // 👇 THIS BLOCK ENABLES SQL LOGGING
-            DB::listen(function ($query) {
-                Log::info('🧠 SQL QUERY:', [
-                    'sql' => $query->sql,
-                    'bindings' => $query->bindings,
-                ]);
-            });
-
-            // Your normal validator
             $validator = Validator::make($request->all(), [
                 'name'     => 'required|string|max:255',
                 'email'    => 'required|email|unique:users,email',
@@ -32,10 +23,13 @@ class AuthController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json(['errors' => $validator->errors()], 422);
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
             }
 
-            // 👇 LARAVEL WILL LOG THIS QUERY NOW
             $user = User::create([
                 'name'     => $request->name,
                 'email'    => $request->email,
@@ -44,16 +38,18 @@ class AuthController extends Controller
                 'otp'      => rand(1000, 9999),
             ]);
 
-            Log::info('✅ USER INSERTED', ['user' => $user]);
-
             return response()->json([
                 'status' => true,
-                'message' => 'User registered. OTP sent.'
-            ]);
+                'message' => 'User registered. OTP sent.',
+                'user' => $user
+            ], 201);
 
         } catch (\Exception $e) {
-            Log::error('❌ Registration failed: ' . $e->getMessage());
-            return response()->json(['message' => 'Something went wrong!', 'error' => $e->getMessage()], 500);
+            return response()->json([
+                'status' => false,
+                'message' => 'Something went wrong!',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 

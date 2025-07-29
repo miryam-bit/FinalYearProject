@@ -19,6 +19,7 @@ class RideController extends Controller
             'vehicle_type'      => 'required|string',
             'payment_method'    => 'required|string',
             'stops'             => 'nullable|array',
+            'driver_id'         => 'required|exists:users,id',
         ]);
 
         if ($validator->fails()) {
@@ -34,6 +35,7 @@ class RideController extends Controller
             'payment_method'   => $request->payment_method,
             'status'           => 'pending',
             'stops'            => json_encode($request->stops),
+            'driver_id'        => $request->driver_id,
         ]);
 
         return response()->json(['message' => 'Ride booked', 'ride' => $ride]);
@@ -146,5 +148,61 @@ $data = $response->json();
         // TODO: Build and send invoice email
 
         return response()->json(['message' => 'Invoice sent successfully (mock response)']);
+    }
+
+    // List all drivers
+    public function listDrivers()
+    {
+        $drivers = \App\Models\User::where('role', 'driver')
+            ->get(['id', 'name', 'email', 'phone', 'latitude', 'longitude']);
+        return response()->json($drivers);
+    }
+
+    // Get rides assigned to the authenticated driver
+    public function getDriverRides(Request $request)
+    {
+        $driverId = Auth::id();
+        $rides = Ride::where('driver_id', $driverId)
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json($rides);
+    }
+
+    // Update the status of a ride assigned to the driver
+    public function updateRideStatus(Request $request)
+    {
+        $request->validate([
+            'ride_id' => 'required|exists:rides,id',
+            'status' => 'required|string',
+        ]);
+
+        $ride = Ride::where('id', $request->ride_id)
+            ->where('driver_id', Auth::id())
+            ->first();
+
+        if (!$ride) {
+            return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
+        }
+
+        $ride->status = $request->status;
+        $ride->save();
+
+        return response()->json(['message' => 'Ride status updated', 'ride' => $ride]);
+    }
+
+    public function updateDriverLocation(Request $request)
+    {
+        $request->validate([
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+        ]);
+        $driver = \App\Models\User::find(Auth::id());
+        if (!$driver || $driver->role !== 'driver') {
+            return response()->json(['message' => 'Not authorized'], 403);
+        }
+        $driver->latitude = $request->latitude;
+        $driver->longitude = $request->longitude;
+        $driver->save();
+        return response()->json(['message' => 'Location updated']);
     }
 }

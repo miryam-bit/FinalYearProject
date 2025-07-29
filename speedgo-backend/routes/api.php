@@ -38,6 +38,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/rides', [RideController::class, 'rideHistory']);
     Route::post('/ride/send-invoice', [RideController::class, 'sendInvoice']); // ✅
     Route::post('/ride/estimate-fare', [RideController::class, 'estimateFare']); // ✅
+    // Temporarily remove middleware for debugging
+    // Route::get('/drivers', [App\Http\Controllers\Api\RideController::class, 'listDrivers']); // commented out for debugging
+    Route::get('/driver/rides', [RideController::class, 'getDriverRides']);
+    Route::post('/ride/update-status', [RideController::class, 'updateRideStatus']);
+    Route::post('/driver/update-location', [RideController::class, 'updateDriverLocation']);
     });
 
     // Transactions
@@ -55,4 +60,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Feedback
     Route::post('/feedback', [FeedbackController::class, 'store']);
+});
+
+// Make /drivers public for debugging
+Route::get('/drivers', [App\Http\Controllers\Api\RideController::class, 'listDrivers']);
+
+Route::get('/test', function () {
+    return 'API is working';
 });
