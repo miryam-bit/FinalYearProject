@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:speedgo_customer_app/auth/bloc/auth_bloc.dart';
 import 'package:speedgo_customer_app/auth/bloc/auth_event.dart';
@@ -79,8 +80,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                    const SizedBox(height: 20),
                   _buildTextField(
                     controller: _phoneController,
-                    hintText: 'Phone Number',
+                    hintText: 'Phone Number (8 digits)',
                     icon: Icons.phone,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Enter your Lebanese phone number (e.g., 81338640)',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   _buildTextField(
@@ -108,6 +119,28 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: () {
+                            // Validate phone number
+                            if (_phoneController.text.length != 8) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Phone number must be exactly 8 digits'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                              return;
+                            }
+                            
+                            // Validate password match
+                            if (_passwordController.text != _passwordConfirmationController.text) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Passwords do not match'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                              return;
+                            }
+                            
                             context.read<AuthBloc>().add(
                                   RegistrationRequested(
                                     name: _nameController.text,
@@ -163,10 +196,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     required String hintText,
     required IconData icon,
     bool obscureText = false,
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
   }) {
     return TextField(
       controller: controller,
       obscureText: obscureText,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         hintText: hintText,

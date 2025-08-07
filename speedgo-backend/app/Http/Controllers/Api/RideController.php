@@ -19,7 +19,7 @@ class RideController extends Controller
             'vehicle_type'      => 'required|string',
             'payment_method'    => 'required|string',
             'stops'             => 'nullable|array',
-            'driver_id'         => 'required|exists:users,id',
+            // Remove driver_id requirement - drivers will accept requests
         ]);
 
         if ($validator->fails()) {
@@ -35,10 +35,10 @@ class RideController extends Controller
             'payment_method'   => $request->payment_method,
             'status'           => 'pending',
             'stops'            => json_encode($request->stops),
-            'driver_id'        => $request->driver_id,
+            'driver_id'        => null, // No driver assigned initially
         ]);
 
-        return response()->json(['message' => 'Ride booked', 'ride' => $ride]);
+        return response()->json(['message' => 'Ride request created successfully', 'ride' => $ride]);
     }
 
     public function cancelRide(Request $request)
@@ -158,13 +158,121 @@ $data = $response->json();
         return response()->json($drivers);
     }
 
-    // Get rides assigned to the authenticated driver
+    // Get ride requests for drivers (pending rides without assigned drivers)
+    public function getRideRequests()
+    {
+        // Check if driver already has an active ride
+        $activeRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->first();
+        
+        if ($activeRide) {
+            return response()->json([
+                'message' => 'You already have an active ride. Complete it first.',
+                'has_active_ride' => true,
+                'active_ride_id' => $activeRide->id
+            ], 403);
+        }
+
+        $rideRequests = Ride::where('status', 'pending')
+            ->whereNull('driver_id')
+            ->with('user:id,name,phone') // Include customer info
+            ->get()
+            ->map(function ($ride) {
+                return [
+                    'id' => $ride->id,
+                    'pickup_location' => $ride->pickup_location,
+                    'dropoff_location' => $ride->dropoff_location,
+                    'customer_name' => $ride->user->name,
+                    'customer_phone' => $ride->user->phone,
+                    'vehicle_type' => $ride->vehicle_type,
+                    'payment_method' => $ride->payment_method,
+                    'created_at' => $ride->created_at,
+                ];
+            });
+        
+        return response()->json([
+            'ride_requests' => $rideRequests,
+            'has_active_ride' => false
+        ]);
+    }
+
+    // Accept a ride request
+    public function acceptRide(Request $request)
+    {
+        $request->validate([
+            'ride_id' => 'required|exists:rides,id',
+        ]);
+
+        // Check if driver already has an active ride
+        $activeRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->first();
+        
+        if ($activeRide) {
+            return response()->json(['message' => 'You already have an active ride. Complete it first.'], 400);
+        }
+
+        $ride = Ride::where('id', $request->ride_id)
+            ->where('status', 'pending')
+            ->whereNull('driver_id')
+            ->first();
+
+        if (!$ride) {
+            return response()->json(['message' => 'Ride request not found or already assigned'], 404);
+        }
+
+        $ride->driver_id = Auth::id();
+        $ride->status = 'accepted';
+        $ride->save();
+
+        return response()->json(['message' => 'Ride accepted successfully', 'ride' => $ride]);
+    }
+
+    // Reject a ride request
+    public function rejectRide(Request $request)
+    {
+        $request->validate([
+            'ride_id' => 'required|exists:rides,id',
+        ]);
+
+        $ride = Ride::where('id', $request->ride_id)
+            ->where('status', 'pending')
+            ->whereNull('driver_id')
+            ->first();
+
+        if (!$ride) {
+            return response()->json(['message' => 'Ride request not found or already assigned'], 404);
+        }
+
+        $ride->status = 'rejected';
+        $ride->save();
+
+        return response()->json(['message' => 'Ride rejected successfully']);
+    }
+
+    // Get rides assigned to the authenticated driver (only active rides)
     public function getDriverRides(Request $request)
     {
         $driverId = Auth::id();
         $rides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress']) // Only active rides
+            ->with('user:id,name,phone') // Include customer info
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function ($ride) {
+                return [
+                    'id' => $ride->id,
+                    'pickup_location' => $ride->pickup_location,
+                    'dropoff_location' => $ride->dropoff_location,
+                    'customer_name' => $ride->user->name,
+                    'customer_phone' => $ride->user->phone,
+                    'status' => $ride->status,
+                    'vehicle_type' => $ride->vehicle_type,
+                    'payment_method' => $ride->payment_method,
+                    'created_at' => $ride->created_at,
+                ];
+            });
         return response()->json($rides);
     }
 
@@ -173,21 +281,45 @@ $data = $response->json();
     {
         $request->validate([
             'ride_id' => 'required|exists:rides,id',
-            'status' => 'required|string',
+            'status' => 'required|string|in:pending,accepted,in_progress,completed,cancelled,rejected',
         ]);
 
-        $ride = Ride::where('id', $request->ride_id)
-            ->where('driver_id', Auth::id())
-            ->first();
+        try {
+            $ride = Ride::where('id', $request->ride_id)
+                ->where('driver_id', Auth::id())
+                ->first();
 
-        if (!$ride) {
-            return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
+            if (!$ride) {
+                return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
+            }
+
+            // Validate status transitions
+            $allowedTransitions = [
+                'accepted' => ['in_progress'],
+                'in_progress' => ['completed'],
+            ];
+
+            if (isset($allowedTransitions[$ride->status]) && !in_array($request->status, $allowedTransitions[$ride->status])) {
+                return response()->json([
+                    'message' => 'Invalid status transition. Current status: ' . $ride->status . ', Allowed: ' . implode(', ', $allowedTransitions[$ride->status])
+                ], 400);
+            }
+
+            $oldStatus = $ride->status;
+            $ride->status = $request->status;
+            $ride->save();
+
+            return response()->json([
+                'message' => 'Ride status updated from ' . $oldStatus . ' to ' . $request->status,
+                'ride' => $ride
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error updating ride status: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error updating ride status: ' . $e->getMessage()
+            ], 500);
         }
-
-        $ride->status = $request->status;
-        $ride->save();
-
-        return response()->json(['message' => 'Ride status updated', 'ride' => $ride]);
     }
 
     public function updateDriverLocation(Request $request)

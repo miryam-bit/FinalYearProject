@@ -41,6 +41,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Temporarily remove middleware for debugging
     // Route::get('/drivers', [App\Http\Controllers\Api\RideController::class, 'listDrivers']); // commented out for debugging
     Route::get('/driver/rides', [RideController::class, 'getDriverRides']);
+    Route::get('/driver/ride-requests', [RideController::class, 'getRideRequests']);
+    Route::post('/driver/accept-ride', [RideController::class, 'acceptRide']);
+    Route::post('/driver/reject-ride', [RideController::class, 'rejectRide']);
     Route::post('/ride/update-status', [RideController::class, 'updateRideStatus']);
     Route::post('/driver/update-location', [RideController::class, 'updateDriverLocation']);
     });

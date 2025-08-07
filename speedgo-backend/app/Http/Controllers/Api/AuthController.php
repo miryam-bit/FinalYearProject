@@ -18,8 +18,11 @@ class AuthController extends Controller
             $validator = Validator::make($request->all(), [
                 'name'     => 'required|string|max:255',
                 'email'    => 'required|email|unique:users,email',
-                'phone'    => 'required|unique:users,phone',
+                'phone'    => 'required|unique:users,phone|regex:/^[0-9]{8}$/',
                 'password' => 'required|min:6'
+            ], [
+                'phone.regex' => 'Phone number must be 8 digits (e.g., 81338640)',
+                'phone.unique' => 'This phone number is already registered',
             ]);
 
             if ($validator->fails()) {

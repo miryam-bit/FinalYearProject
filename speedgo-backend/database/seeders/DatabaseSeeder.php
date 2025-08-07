@@ -16,33 +16,43 @@ class DatabaseSeeder extends Seeder
     {
         // User::factory(10)->create();
 
+        // Clear existing users to avoid conflicts
+        User::where('email', 'like', '%@speedgo.com')->delete();
+        User::where('phone', 'in', ['81338640', '81338641', '81338642', '81338643'])->delete();
+
         User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-            'phone' => '9999999999', // Added phone field
+            'name' => 'Test Customer',
+            'email' => 'customer@speedgo.com',
+            'phone' => '81338640', // Your real Lebanese phone number
             'password' => Hash::make('password'),
             'role' => 'customer',
         ]);
         User::create([
-            'name' => 'Driver One',
-            'email' => 'driver1@example.com',
-            'phone' => '1111111111',
-            'password' => Hash::make('password1'),
+            'name' => 'Test Driver',
+            'email' => 'driver@speedgo.com',
+            'phone' => '81338641', // Similar number for driver testing
+            'password' => Hash::make('password'),
             'role' => 'driver',
+            'latitude' => 0.0,
+            'longitude' => 0.0,
         ]);
         User::create([
             'name' => 'Driver Two',
-            'email' => 'driver2@example.com',
-            'phone' => '2222222222',
-            'password' => Hash::make('password2'),
+            'email' => 'driver2@speedgo.com',
+            'phone' => '81338642',
+            'password' => Hash::make('password'),
             'role' => 'driver',
+            'latitude' => 0.0,
+            'longitude' => 0.0,
         ]);
         User::create([
             'name' => 'Driver Three',
-            'email' => 'driver3@example.com',
-            'phone' => '3333333333',
-            'password' => Hash::make('password3'),
+            'email' => 'driver3@speedgo.com',
+            'phone' => '81338643',
+            'password' => Hash::make('password'),
             'role' => 'driver',
+            'latitude' => 0.0,
+            'longitude' => 0.0,
         ]);
     }
 }
