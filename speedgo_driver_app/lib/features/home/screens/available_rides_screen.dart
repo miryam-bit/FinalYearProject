@@ -15,11 +15,8 @@ class _AvailableRidesScreenState extends State<AvailableRidesScreen> {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     final response = await http.get(
-      Uri.parse('http://192.168.10.81:8000/api/driver/rides'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
+      Uri.parse('http://192.168.10.60:8000/api/driver/rides'),
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
     );
     if (response.statusCode == 200) {
       final List rides = jsonDecode(response.body);
@@ -50,7 +47,9 @@ class _AvailableRidesScreenState extends State<AvailableRidesScreen> {
               final ride = rides[index];
               return ListTile(
                 title: Text('Pickup: ${ride['pickup_location']}'),
-                subtitle: Text('Dropoff: ${ride['dropoff_location']}\nStatus: ${ride['status']}'),
+                subtitle: Text(
+                  'Dropoff: ${ride['dropoff_location']}\nStatus: ${ride['status']}',
+                ),
                 trailing: ElevatedButton(
                   onPressed: () {
                     // TODO: Implement ride status update
@@ -64,4 +63,4 @@ class _AvailableRidesScreenState extends State<AvailableRidesScreen> {
       ),
     );
   }
-} 
+}

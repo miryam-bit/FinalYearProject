@@ -22,7 +22,10 @@ class _DriverLocationUpdaterState extends State<DriverLocationUpdater> {
   }
 
   void _startUpdatingLocation() {
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _updateLocation());
+    _timer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _updateLocation(),
+    );
     _updateLocation(); // Update immediately on start
   }
 
@@ -37,17 +40,20 @@ class _DriverLocationUpdaterState extends State<DriverLocationUpdater> {
     if (!serviceEnabled) return;
 
     final position = await Geolocator.getCurrentPosition();
-    print('Sending location: ${position.latitude}, ${position.longitude}'); // Debug print
+    print(
+      'Sending location: ${position.latitude}, ${position.longitude}',
+    ); // Debug print
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     await http.post(
-      Uri.parse('http://192.168.10.81:8000/api/driver/update-location'),
+      Uri.parse('http://192.168.10.60:8000/api/driver/update-location'),
       headers: {
         'Authorization': 'Bearer $token',
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
-      body: '{"latitude": ${position.latitude}, "longitude": ${position.longitude}}',
+      body:
+          '{"latitude": ${position.latitude}, "longitude": ${position.longitude}}',
     );
   }
 
@@ -61,4 +67,4 @@ class _DriverLocationUpdaterState extends State<DriverLocationUpdater> {
   Widget build(BuildContext context) {
     return const SizedBox.shrink(); // Invisible widget
   }
-} 
+}

@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthRepository {
-  final String _baseUrl = "http://192.168.10.81:8000/api/auth";
+  final String _baseUrl = "http://192.168.10.60:8000/api/auth";
 
   Future<void> login(String phone, String password) async {
     final response = await http.post(
@@ -12,10 +12,7 @@ class AuthRepository {
         'Content-Type': 'application/json; charset=UTF-8',
         'Accept': 'application/json',
       },
-      body: jsonEncode(<String, String>{
-        'phone': phone,
-        'password': password,
-      }),
+      body: jsonEncode(<String, String>{'phone': phone, 'password': password}),
     );
     final responseBody = jsonDecode(response.body);
 
@@ -64,20 +61,14 @@ class AuthRepository {
     }
   }
 
-  Future<void> verifyOtp({
-    required String phone,
-    required String otp,
-  }) async {
+  Future<void> verifyOtp({required String phone, required String otp}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/verify-otp'),
       headers: <String, String>{
         'Content-Type': 'application/json; charset=UTF-8',
         'Accept': 'application/json',
       },
-      body: jsonEncode(<String, String>{
-        'phone': phone,
-        'otp': otp,
-      }),
+      body: jsonEncode(<String, String>{'phone': phone, 'otp': otp}),
     );
 
     final responseBody = jsonDecode(response.body);
@@ -90,4 +81,4 @@ class AuthRepository {
       throw Exception(responseBody['message'] ?? 'Failed to verify OTP');
     }
   }
-} 
+}

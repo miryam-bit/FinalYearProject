@@ -28,7 +28,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final Completer<GoogleMapController> _controller = Completer();
-  PolylinePoints polylinePoints = PolylinePoints(apiKey: "AIzaSyDUAPMhKz0uqqwkVoWTdwpb0U9QSlpYHqE");
+  PolylinePoints polylinePoints = PolylinePoints(
+    apiKey: "AIzaSyDUAPMhKz0uqqwkVoWTdwpb0U9QSlpYHqE",
+  );
 
   List<Stop> _stops = [];
   List<TextEditingController> _controllers = [];
@@ -54,13 +56,21 @@ class _HomeScreenState extends State<HomeScreen> {
     _addInitialStops();
     _determinePosition();
   }
-  
-  void _setMarkerIcons() async {
-    _pickupMarker = await BitmapDescriptor.fromAssetImage(const ImageConfiguration(size: Size(48, 48)), 'assets/pickup_marker.png');
-    _stopMarker = await BitmapDescriptor.fromAssetImage(const ImageConfiguration(size: Size(48, 48)), 'assets/stop_marker.png');
-    _dropoffMarker = await BitmapDescriptor.fromAssetImage(const ImageConfiguration(size: Size(48, 48)), 'assets/dropoff_marker.png');
-  }
 
+  void _setMarkerIcons() async {
+    _pickupMarker = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
+      'assets/pickup_marker.png',
+    );
+    _stopMarker = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
+      'assets/stop_marker.png',
+    );
+    _dropoffMarker = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
+      'assets/dropoff_marker.png',
+    );
+  }
 
   void _addInitialStops() {
     setState(() {
@@ -98,16 +108,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (permission == LocationPermission.deniedForever) {
       return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
+        'Location permissions are permanently denied, we cannot request permissions.',
+      );
     }
 
     Position position = await Geolocator.getCurrentPosition();
-    controller.animateCamera(CameraUpdate.newCameraPosition(CameraPosition(
-      target: LatLng(position.latitude, position.longitude),
-      zoom: 15,
-    )));
+    controller.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: LatLng(position.latitude, position.longitude),
+          zoom: 15,
+        ),
+      ),
+    );
 
-    List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+    List<Placemark> placemarks = await placemarkFromCoordinates(
+      position.latitude,
+      position.longitude,
+    );
     if (placemarks.isNotEmpty) {
       var p = placemarks.first;
       String address = "${p.name}, ${p.street}";
@@ -127,16 +145,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
     final apiKey = "AIzaSyDUAPMhKz0uqqwkVoWTdwpb0U9QSlpYHqE";
-    final url = "https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$apiKey";
+    final url =
+        "https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$apiKey";
     final response = await http.get(Uri.parse(url));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['status'] == 'OK') {
         final location = data['result']['geometry']['location'];
-        return {
-          'lat': location['lat'],
-          'lng': location['lng'],
-        };
+        return {'lat': location['lat'], 'lng': location['lng']};
       }
     }
     return null;
@@ -157,15 +173,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _drawRoute();
     }
   }
-  
+
   void _getFare() {
     // We will implement this next
     print("Getting fare for ${_stops.length} stops");
   }
 
   Future<void> _fetchAvailableDrivers(LatLng pickupLocation) async {
-    print('Pickup location: ${pickupLocation.latitude}, ${pickupLocation.longitude}'); // Debug print
-    final response = await http.get(Uri.parse('http://192.168.10.81:8000/api/drivers'));
+    print(
+      'Pickup location: ${pickupLocation.latitude}, ${pickupLocation.longitude}',
+    ); // Debug print
+    final response = await http.get(
+      Uri.parse('http://192.168.10.60:8000/api/drivers'),
+    );
     if (response.statusCode == 200) {
       final List drivers = jsonDecode(response.body);
       for (var driver in drivers) {
@@ -185,21 +205,22 @@ class _HomeScreenState extends State<HomeScreen> {
         print('Distance to pickup: $distance km');
       }
       // Filter drivers by proximity (e.g., within 5km)
-      final filtered = drivers.where((driver) {
-        final lat = driver['latitude'];
-        final lng = driver['longitude'];
-        if (lat == null || lng == null) return false;
-        final driverLat = lat is String ? double.tryParse(lat) : lat;
-        final driverLng = lng is String ? double.tryParse(lng) : lng;
-        if (driverLat == null || driverLng == null) return false;
-        final distance = _calculateDistance(
-          pickupLocation.latitude,
-          pickupLocation.longitude,
-          driverLat,
-          driverLng,
-        );
-        return distance <= 5.0; // 5 km radius
-      }).toList();
+      final filtered =
+          drivers.where((driver) {
+            final lat = driver['latitude'];
+            final lng = driver['longitude'];
+            if (lat == null || lng == null) return false;
+            final driverLat = lat is String ? double.tryParse(lat) : lat;
+            final driverLng = lng is String ? double.tryParse(lng) : lng;
+            if (driverLat == null || driverLng == null) return false;
+            final distance = _calculateDistance(
+              pickupLocation.latitude,
+              pickupLocation.longitude,
+              driverLat,
+              driverLng,
+            );
+            return distance <= 5.0; // 5 km radius
+          }).toList();
       print('Filtered drivers: $filtered'); // Debug print
       setState(() {
         _availableDrivers = List<Map<String, dynamic>>.from(filtered);
@@ -208,13 +229,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+  double _calculateDistance(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
     const earthRadius = 6371; // km
     final dLat = _deg2rad(lat2 - lat1);
     final dLon = _deg2rad(lon2 - lon1);
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_deg2rad(lat1)) * cos(_deg2rad(lat2)) *
-        sin(dLon / 2) * sin(dLon / 2);
+    final a =
+        sin(dLat / 2) * sin(dLat / 2) +
+        cos(_deg2rad(lat1)) *
+            cos(_deg2rad(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return earthRadius * c;
   }
@@ -223,7 +252,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showDriverSelectionDialog() async {
     if (_availableDrivers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
       return;
     }
     final selected = await showDialog<Map<String, dynamic>>(
@@ -264,23 +295,31 @@ class _HomeScreenState extends State<HomeScreen> {
       print('No driver selected, fetching drivers...');
       if (_stops.isEmpty || _stops.first.prediction == null) {
         print('Returning early: No pickup location selected!');
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a pickup location.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a pickup location.')),
+        );
         return;
       }
       final pickupLat = double.tryParse(_stops.first.prediction!.lat ?? '');
       final pickupLng = double.tryParse(_stops.first.prediction!.lng ?? '');
       if (pickupLat == null || pickupLng == null) {
         print('Returning early: Invalid pickup coordinates!');
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid pickup location.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid pickup location.')),
+        );
         return;
       }
       await _fetchAvailableDrivers(LatLng(pickupLat, pickupLng));
       if (_availableDrivers.isEmpty) {
         print('Returning early: No drivers nearby after fetch.');
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
         return;
       }
-      print('Showing driver selection dialog with ${_availableDrivers.length} drivers');
+      print(
+        'Showing driver selection dialog with ${_availableDrivers.length} drivers',
+      );
       final selected = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (context) {
@@ -318,7 +357,11 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     if (_stops.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select pickup and dropoff locations.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select pickup and dropoff locations.'),
+        ),
+      );
       return;
     }
     final pickup = _stops.first.prediction;
@@ -329,13 +372,22 @@ class _HomeScreenState extends State<HomeScreen> {
     print('Dropoff description: ${dropoff?.description}');
     if (pickup == null || dropoff == null) {
       print('Returning early: Pickup or dropoff prediction is null.');
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select valid locations.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select valid locations.')),
+      );
       return;
     }
-    final stops = _stops.sublist(1, _stops.length - 1).where((s) => s.prediction != null).map((s) => {
-      'latitude': double.parse(s.prediction!.lat!),
-      'longitude': double.parse(s.prediction!.lng!),
-    }).toList();
+    final stops =
+        _stops
+            .sublist(1, _stops.length - 1)
+            .where((s) => s.prediction != null)
+            .map(
+              (s) => {
+                'latitude': double.parse(s.prediction!.lat!),
+                'longitude': double.parse(s.prediction!.lng!),
+              },
+            )
+            .toList();
     final body = {
       'pickup_location': pickup.description,
       'dropoff_location': dropoff.description,
@@ -348,7 +400,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     final response = await http.post(
-      Uri.parse('http://192.168.10.81:8000/api/ride/book'),
+      Uri.parse('http://192.168.10.60:8000/api/ride/book'),
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -357,9 +409,13 @@ class _HomeScreenState extends State<HomeScreen> {
       body: jsonEncode(body),
     );
     if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ride booked successfully!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ride booked successfully!')),
+      );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to book ride: ${response.body}')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to book ride: ${response.body}')),
+      );
     }
   }
 
@@ -370,20 +426,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
     print('--- Drawing Markers ---');
     for (int i = 0; i < _stops.length; i++) {
-      print('Stop $i: ${_stops[i].prediction?.description} | lat: ${_stops[i].prediction?.lat} | lng: ${_stops[i].prediction?.lng}');
+      print(
+        'Stop $i: ${_stops[i].prediction?.description} | lat: ${_stops[i].prediction?.lat} | lng: ${_stops[i].prediction?.lng}',
+      );
       var stop = _stops[i];
-      if (stop.prediction != null && stop.prediction!.lat != null && stop.prediction!.lng != null) {
+      if (stop.prediction != null &&
+          stop.prediction!.lat != null &&
+          stop.prediction!.lng != null) {
         var lat = double.tryParse(stop.prediction!.lat!);
         var lng = double.tryParse(stop.prediction!.lng!);
         if (lat != null && lng != null) {
           routePoints.add(LatLng(lat, lng));
           BitmapDescriptor icon;
           if (i == 0) {
-            icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen); // Pickup
+            icon = BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueGreen,
+            ); // Pickup
           } else if (i == _stops.length - 1) {
-            icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed); // Dropoff
+            icon = BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueRed,
+            ); // Dropoff
           } else {
-            icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow); // Stop
+            icon = BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueYellow,
+            ); // Stop
           }
           _markers.add(
             Marker(
@@ -401,14 +467,26 @@ class _HomeScreenState extends State<HomeScreen> {
       // Try as named parameter
       PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
         request: PolylineRequest(
-          origin: PointLatLng(routePoints.first.latitude, routePoints.first.longitude),
-          destination: PointLatLng(routePoints.last.latitude, routePoints.last.longitude),
+          origin: PointLatLng(
+            routePoints.first.latitude,
+            routePoints.first.longitude,
+          ),
+          destination: PointLatLng(
+            routePoints.last.latitude,
+            routePoints.last.longitude,
+          ),
           mode: TravelMode.driving,
-          wayPoints: routePoints.length > 2
-              ? routePoints.sublist(1, routePoints.length - 1).map(
-                  (p) => PolylineWayPoint(location: "${p.latitude},${p.longitude}")
-                ).toList()
-              : [],
+          wayPoints:
+              routePoints.length > 2
+                  ? routePoints
+                      .sublist(1, routePoints.length - 1)
+                      .map(
+                        (p) => PolylineWayPoint(
+                          location: "${p.latitude},${p.longitude}",
+                        ),
+                      )
+                      .toList()
+                  : [],
         ),
       );
       // If the above fails, try as positional argument:
@@ -428,7 +506,10 @@ class _HomeScreenState extends State<HomeScreen> {
           Polyline(
             polylineId: const PolylineId('route'),
             color: Colors.blueAccent,
-            points: result.points.map((p) => LatLng(p.latitude, p.longitude)).toList(),
+            points:
+                result.points
+                    .map((p) => LatLng(p.latitude, p.longitude))
+                    .toList(),
             width: 6,
           ),
         );
@@ -439,7 +520,9 @@ class _HomeScreenState extends State<HomeScreen> {
       controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100.0));
     } else if (routePoints.length == 1) {
       final GoogleMapController controller = await _controller.future;
-      controller.animateCamera(CameraUpdate.newLatLngZoom(routePoints.first, 15));
+      controller.animateCamera(
+        CameraUpdate.newLatLngZoom(routePoints.first, 15),
+      );
     }
     setState(() {});
   }
@@ -457,7 +540,10 @@ class _HomeScreenState extends State<HomeScreen> {
         if (latLng.longitude < y0!) y0 = latLng.longitude;
       }
     }
-    return LatLngBounds(northeast: LatLng(x1!, y1!), southwest: LatLng(x0!, y0!));
+    return LatLngBounds(
+      northeast: LatLng(x1!, y1!),
+      southwest: LatLng(x0!, y0!),
+    );
   }
 
   @override
@@ -471,16 +557,14 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () {
               context.read<AuthBloc>().add(LogoutRequested());
             },
-          )
+          ),
         ],
       ),
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthInitial) {
             Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (context) => const LoginScreen(),
-              ),
+              MaterialPageRoute(builder: (context) => const LoginScreen()),
             );
           }
         },
@@ -507,4 +591,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-} 
+}
