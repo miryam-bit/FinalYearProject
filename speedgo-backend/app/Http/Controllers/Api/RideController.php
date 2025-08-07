@@ -19,11 +19,30 @@ class RideController extends Controller
             'vehicle_type'      => 'required|string',
             'payment_method'    => 'required|string',
             'stops'             => 'nullable|array',
-            'driver_id'         => 'required|exists:users,id',
+            // Remove driver_id requirement - drivers will accept requests
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        // Validate that scheduled rides are only for the same day
+        if ($request->scheduled_at) {
+            $scheduledDate = \Carbon\Carbon::parse($request->scheduled_at);
+            $today = \Carbon\Carbon::today();
+            
+            if (!$scheduledDate->isSameDay($today)) {
+                return response()->json([
+                    'message' => 'Scheduled rides can only be booked for the same day.'
+                ], 422);
+            }
+            
+            // Ensure scheduled time is in the future
+            if ($scheduledDate->isPast()) {
+                return response()->json([
+                    'message' => 'Scheduled time must be in the future.'
+                ], 422);
+            }
         }
 
         $ride = Ride::create([
@@ -35,10 +54,10 @@ class RideController extends Controller
             'payment_method'   => $request->payment_method,
             'status'           => 'pending',
             'stops'            => json_encode($request->stops),
-            'driver_id'        => $request->driver_id,
+            'driver_id'        => null, // No driver assigned initially
         ]);
 
-        return response()->json(['message' => 'Ride booked', 'ride' => $ride]);
+        return response()->json(['message' => 'Ride request created successfully', 'ride' => $ride]);
     }
 
     public function cancelRide(Request $request)
@@ -158,13 +177,241 @@ $data = $response->json();
         return response()->json($drivers);
     }
 
-    // Get rides assigned to the authenticated driver
+    // Get ride requests for drivers (pending rides without assigned drivers)
+    public function getRideRequests(Request $request)
+    {
+        // Get current time from client or use server time as fallback
+        $currentTime = $request->input('current_time');
+        if ($currentTime) {
+            $now = \Carbon\Carbon::parse($currentTime);
+        } else {
+            $now = now();
+        }
+
+        // Check if driver already has an active immediate ride (not scheduled)
+        $activeImmediateRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNull('scheduled_at') // Only immediate rides, not scheduled ones
+            ->first();
+        
+        if ($activeImmediateRide) {
+            return response()->json([
+                'message' => 'You already have an active ride. Complete it first.',
+                'has_active_ride' => true,
+                'active_ride_id' => $activeImmediateRide->id,
+                'can_accept_rides' => false,
+                'ride_requests' => []
+            ], 403);
+        }
+
+        // Check if driver has any scheduled rides
+        $scheduledRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNotNull('scheduled_at')
+            ->first();
+
+        if ($scheduledRide) {
+            $timeDiff = $now->diffInMinutes($scheduledRide->scheduled_at);
+            $isWithinOneHour = $timeDiff <= 60;
+            
+            // Debug logging
+            \Log::info('Driver ID: ' . Auth::id());
+            \Log::info('Client current time: ' . $now->format('Y-m-d H:i:s'));
+            \Log::info('Scheduled ride time: ' . $scheduledRide->scheduled_at->format('Y-m-d H:i:s'));
+            \Log::info('Time difference: ' . $timeDiff . ' minutes');
+            \Log::info('Is within 1 hour: ' . ($isWithinOneHour ? 'Yes' : 'No'));
+            
+            if ($isWithinOneHour) {
+                // Within 1 hour - block completely
+                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
+                $direction = $scheduledRide->scheduled_at > $now ? 'in' : 'ago';
+                
+                return response()->json([
+                    'message' => "You have a scheduled ride at $scheduledTime ($timeDiff minutes $direction). You cannot accept new rides within 1 hour of your scheduled ride.",
+                    'has_active_ride' => false,
+                    'has_scheduled_ride' => true,
+                    'scheduled_ride_time' => $scheduledTime,
+                    'can_accept_rides' => false,
+                    'ride_requests' => [] // Empty array - no ride requests shown
+                ], 403);
+            } else {
+                // More than 1 hour away - allow access but show warning
+                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
+                $hoursAway = floor($timeDiff / 60);
+                $minutesAway = $timeDiff % 60;
+                $timeString = $hoursAway > 0 ? "$hoursAway hours $minutesAway minutes" : "$minutesAway minutes";
+                
+                // Continue to show ride requests but with warning
+                $pendingRides = Ride::where('status', 'pending')
+                    ->whereNull('driver_id')
+                    ->with('user:id,name,phone')
+                    ->get()
+                    ->map(function ($ride) {
+                        return [
+                            'id' => $ride->id,
+                            'pickup_location' => $ride->pickup_location,
+                            'dropoff_location' => $ride->dropoff_location,
+                            'customer_name' => $ride->user->name,
+                            'customer_phone' => $ride->user->phone,
+                            'vehicle_type' => $ride->vehicle_type,
+                            'payment_method' => $ride->payment_method,
+                            'scheduled_at' => $ride->scheduled_at,
+                            'created_at' => $ride->created_at,
+                        ];
+                    });
+
+                return response()->json([
+                    'message' => "You have a scheduled ride at $scheduledTime ($timeString away). You can still accept other rides.",
+                    'has_active_ride' => false,
+                    'has_scheduled_ride' => true,
+                    'scheduled_ride_time' => $scheduledTime,
+                    'can_accept_rides' => true,
+                    'ride_requests' => $pendingRides
+                ]);
+            }
+        }
+
+        // No active rides - show all pending rides
+        $pendingRides = Ride::where('status', 'pending')
+            ->whereNull('driver_id')
+            ->with('user:id,name,phone')
+            ->get()
+            ->map(function ($ride) {
+                return [
+                    'id' => $ride->id,
+                    'pickup_location' => $ride->pickup_location,
+                    'dropoff_location' => $ride->dropoff_location,
+                    'customer_name' => $ride->user->name,
+                    'customer_phone' => $ride->user->phone,
+                    'vehicle_type' => $ride->vehicle_type,
+                    'payment_method' => $ride->payment_method,
+                    'scheduled_at' => $ride->scheduled_at,
+                    'created_at' => $ride->created_at,
+                ];
+            });
+
+        return response()->json([
+            'message' => 'Available ride requests',
+            'has_active_ride' => false,
+            'has_scheduled_ride' => false,
+            'can_accept_rides' => true,
+            'ride_requests' => $pendingRides
+        ]);
+    }
+
+    // Accept a ride request
+    public function acceptRide(Request $request)
+    {
+        $request->validate([
+            'ride_id' => 'required|exists:rides,id',
+        ]);
+
+        // Get current time from client or use server time as fallback
+        $currentTime = $request->input('current_time');
+        if ($currentTime) {
+            $now = \Carbon\Carbon::parse($currentTime);
+        } else {
+            $now = now();
+        }
+
+        // Check if driver already has an active immediate ride (not scheduled)
+        $activeImmediateRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNull('scheduled_at') // Only immediate rides, not scheduled ones
+            ->first();
+        
+        if ($activeImmediateRide) {
+            return response()->json([
+                'message' => 'You already have an active ride. Complete it first.'
+            ], 400);
+        }
+
+        // Check if driver has any scheduled rides
+        $scheduledRide = Ride::where('driver_id', Auth::id())
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNotNull('scheduled_at')
+            ->first();
+
+        if ($scheduledRide) {
+            $timeDiff = $now->diffInMinutes($scheduledRide->scheduled_at);
+            $isWithinOneHour = $timeDiff <= 60;
+            
+            if ($isWithinOneHour) {
+                // Within 1 hour - block accepting new rides
+                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
+                $direction = $scheduledRide->scheduled_at > $now ? 'in' : 'ago';
+                
+                return response()->json([
+                    'message' => "You have a scheduled ride at $scheduledTime ($timeDiff minutes $direction). You cannot accept new rides within 1 hour of your scheduled ride."
+                ], 400);
+            }
+            // If more than 1 hour away, allow accepting new rides
+        }
+
+        $ride = Ride::where('id', $request->ride_id)
+            ->where('status', 'pending')
+            ->whereNull('driver_id')
+            ->first();
+
+        if (!$ride) {
+            return response()->json(['message' => 'Ride request not found or already assigned'], 404);
+        }
+
+        $ride->driver_id = Auth::id();
+        $ride->status = 'accepted';
+        $ride->save();
+
+        // Debug logging for accepted ride
+        \Log::info('Ride accepted - ID: ' . $ride->id . ', Driver ID: ' . Auth::id() . ', Scheduled: ' . ($ride->scheduled_at ? $ride->scheduled_at->format('Y-m-d H:i:s') : 'No'));
+
+        return response()->json(['message' => 'Ride accepted successfully', 'ride' => $ride]);
+    }
+
+    // Reject a ride request
+    public function rejectRide(Request $request)
+    {
+        $request->validate([
+            'ride_id' => 'required|exists:rides,id',
+        ]);
+
+        $ride = Ride::where('id', $request->ride_id)
+            ->where('status', 'pending')
+            ->whereNull('driver_id')
+            ->first();
+
+        if (!$ride) {
+            return response()->json(['message' => 'Ride request not found or already assigned'], 404);
+        }
+
+        $ride->status = 'rejected';
+        $ride->save();
+
+        return response()->json(['message' => 'Ride rejected successfully']);
+    }
+
+    // Get rides assigned to the authenticated driver (only active rides)
     public function getDriverRides(Request $request)
     {
         $driverId = Auth::id();
         $rides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress']) // Only active rides
+            ->with('user:id,name,phone') // Include customer info
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function ($ride) {
+                return [
+                    'id' => $ride->id,
+                    'pickup_location' => $ride->pickup_location,
+                    'dropoff_location' => $ride->dropoff_location,
+                    'customer_name' => $ride->user->name,
+                    'customer_phone' => $ride->user->phone,
+                    'status' => $ride->status,
+                    'vehicle_type' => $ride->vehicle_type,
+                    'payment_method' => $ride->payment_method,
+                    'scheduled_at' => $ride->scheduled_at,
+                    'created_at' => $ride->created_at,
+                ];
+            });
         return response()->json($rides);
     }
 
@@ -173,21 +420,45 @@ $data = $response->json();
     {
         $request->validate([
             'ride_id' => 'required|exists:rides,id',
-            'status' => 'required|string',
+            'status' => 'required|string|in:pending,accepted,in_progress,completed,cancelled,rejected',
         ]);
 
-        $ride = Ride::where('id', $request->ride_id)
-            ->where('driver_id', Auth::id())
-            ->first();
+        try {
+            $ride = Ride::where('id', $request->ride_id)
+                ->where('driver_id', Auth::id())
+                ->first();
 
-        if (!$ride) {
-            return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
+            if (!$ride) {
+                return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
+            }
+
+            // Validate status transitions
+            $allowedTransitions = [
+                'accepted' => ['in_progress'],
+                'in_progress' => ['completed'],
+            ];
+
+            if (isset($allowedTransitions[$ride->status]) && !in_array($request->status, $allowedTransitions[$ride->status])) {
+                return response()->json([
+                    'message' => 'Invalid status transition. Current status: ' . $ride->status . ', Allowed: ' . implode(', ', $allowedTransitions[$ride->status])
+                ], 400);
+            }
+
+            $oldStatus = $ride->status;
+            $ride->status = $request->status;
+            $ride->save();
+
+            return response()->json([
+                'message' => 'Ride status updated from ' . $oldStatus . ' to ' . $request->status,
+                'ride' => $ride
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error updating ride status: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Error updating ride status: ' . $e->getMessage()
+            ], 500);
         }
-
-        $ride->status = $request->status;
-        $ride->save();
-
-        return response()->json(['message' => 'Ride status updated', 'ride' => $ride]);
     }
 
     public function updateDriverLocation(Request $request)
@@ -204,5 +475,82 @@ $data = $response->json();
         $driver->longitude = $request->longitude;
         $driver->save();
         return response()->json(['message' => 'Location updated']);
+    }
+
+    // Debug method to test scheduled ride logic
+    public function debugScheduledRide()
+    {
+        $driverId = Auth::id();
+        $now = now();
+        $oneHourBefore = $now->copy()->subHour();
+        $oneHourAfter = $now->copy()->addHour();
+        
+        // Get all active rides (both immediate and scheduled)
+        $allActiveRides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->get();
+        
+        // Get immediate rides (no scheduled_at)
+        $immediateRides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNull('scheduled_at')
+            ->get();
+        
+        // Get scheduled rides
+        $scheduledRides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNotNull('scheduled_at')
+            ->get();
+        
+        $conflictingRide = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['accepted', 'in_progress'])
+            ->whereNotNull('scheduled_at')
+            ->where('scheduled_at', '>=', $oneHourBefore)
+            ->where('scheduled_at', '<=', $oneHourAfter)
+            ->first();
+        
+        // Calculate time differences for all scheduled rides
+        $scheduledRidesWithTimeDiff = $scheduledRides->map(function($ride) use ($now) {
+            $timeDiff = $now->diffInMinutes($ride->scheduled_at);
+            $direction = $ride->scheduled_at > $now ? 'in' : 'ago';
+            return [
+                'id' => $ride->id,
+                'scheduled_at' => $ride->scheduled_at->format('Y-m-d H:i:s'),
+                'status' => $ride->status,
+                'time_difference_minutes' => $timeDiff,
+                'direction' => $direction,
+                'is_within_1_hour' => $timeDiff <= 60
+            ];
+        });
+        
+        return response()->json([
+            'driver_id' => $driverId,
+            'current_time' => $now->format('Y-m-d H:i:s'),
+            'one_hour_before' => $oneHourBefore->format('Y-m-d H:i:s'),
+            'one_hour_after' => $oneHourAfter->format('Y-m-d H:i:s'),
+            'all_active_rides' => $allActiveRides->map(function($ride) {
+                return [
+                    'id' => $ride->id,
+                    'scheduled_at' => $ride->scheduled_at ? $ride->scheduled_at->format('Y-m-d H:i:s') : null,
+                    'status' => $ride->status,
+                    'type' => $ride->scheduled_at ? 'scheduled' : 'immediate'
+                ];
+            }),
+            'immediate_rides' => $immediateRides->map(function($ride) {
+                return [
+                    'id' => $ride->id,
+                    'status' => $ride->status
+                ];
+            }),
+            'scheduled_rides' => $scheduledRidesWithTimeDiff,
+            'conflicting_ride' => $conflictingRide ? [
+                'id' => $conflictingRide->id,
+                'scheduled_at' => $conflictingRide->scheduled_at->format('Y-m-d H:i:s'),
+                'time_difference_minutes' => $now->diffInMinutes($conflictingRide->scheduled_at),
+                'direction' => $conflictingRide->scheduled_at > $now ? 'in' : 'ago'
+            ] : null,
+            'can_see_ride_requests' => $immediateRides->isEmpty() && $conflictingRide === null,
+            'can_accept_rides' => $conflictingRide === null
+        ]);
     }
 }

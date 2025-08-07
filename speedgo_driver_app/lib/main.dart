@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'auth/repository/auth_repository.dart';
 import 'features/home/screens/available_rides_screen.dart';
 import 'features/home/screens/driver_location_updater.dart';
+import 'features/home/screens/manual_location_screen.dart';
+import 'features/home/screens/my_rides_screen.dart';
 
 void main() {
   runApp(const SpeedGoDriverApp());
@@ -21,7 +23,9 @@ class SpeedGoDriverApp extends StatelessWidget {
       routes: {
         '/login': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),
-        '/available_rides': (context) => const AvailableRidesScreen(),
+        '/ride_requests': (context) => const RideRequestsScreen(),
+        '/manual_location': (context) => const ManualLocationScreen(),
+        '/my_rides': (context) => const MyRidesScreen(),
       },
     );
   }
@@ -113,14 +117,14 @@ class HomeScreen extends StatelessWidget {
               children: [
                 ElevatedButton(
                   onPressed: () {
-                    Navigator.pushNamed(context, '/available_rides');
+                    Navigator.pushNamed(context, '/ride_requests');
                   },
-                  child: const Text('Available Rides'),
+                  child: const Text('Ride Requests'),
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () {
-                    // TODO: Navigate to My Rides
+                    Navigator.pushNamed(context, '/my_rides');
                   },
                   child: const Text('My Rides'),
                 ),

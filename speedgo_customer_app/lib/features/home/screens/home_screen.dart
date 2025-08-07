@@ -32,12 +32,13 @@ class _HomeScreenState extends State<HomeScreen> {
     apiKey: "AIzaSyDUAPMhKz0uqqwkVoWTdwpb0U9QSlpYHqE",
   );
 
-  List<Stop> _stops = [];
-  List<TextEditingController> _controllers = [];
-  Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
+  final List<Stop> _stops = [];
+  final List<TextEditingController> _controllers = [];
+  final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
   List<Map<String, dynamic>> _availableDrivers = [];
   Map<String, dynamic>? _selectedDriver;
+  DateTime? _scheduledTime; // Add this line for scheduled rides
 
   // Custom Marker Icons
   BitmapDescriptor _pickupMarker = BitmapDescriptor.defaultMarker;
@@ -159,19 +160,52 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onStopSelected(int index, Prediction prediction) async {
-    final details = await getPlaceDetails(prediction.placeId!);
-    if (details != null) {
-      setState(() {
-        _stops[index].prediction = Prediction.fromJson({
-          "description": prediction.description,
-          "place_id": prediction.placeId,
-          "lat": details['lat'].toString(),
-          "lng": details['lng'].toString(),
-          "types": [],
-        });
+    print('=== LOCATION SELECTION DEBUG ===');
+    print('Stop index: $index');
+    print('Prediction description: "${prediction.description}"');
+    print('Prediction place_id: "${prediction.placeId}"');
+
+    // First, immediately set the prediction with available data
+    setState(() {
+      _stops[index].prediction = Prediction.fromJson({
+        "description": prediction.description ?? "Unknown Location",
+        "place_id": prediction.placeId ?? "",
+        "lat": prediction.lat ?? "0",
+        "lng": prediction.lng ?? "0",
+        "types": prediction.types ?? [],
       });
-      _drawRoute();
+    });
+
+    // Update the controller text
+    _controllers[index].text = prediction.description ?? "";
+
+    print('Immediately set prediction for stop $index');
+    print('Updated controller text: "${_controllers[index].text}"');
+
+    // Then try to get more detailed coordinates if we have a place_id
+    if (prediction.placeId != null && prediction.placeId!.isNotEmpty) {
+      final details = await getPlaceDetails(prediction.placeId!);
+      if (details != null) {
+        setState(() {
+          _stops[index].prediction = Prediction.fromJson({
+            "description": prediction.description ?? "Unknown Location",
+            "place_id": prediction.placeId,
+            "lat": details['lat'].toString(),
+            "lng": details['lng'].toString(),
+            "types": prediction.types ?? [],
+          });
+        });
+        print(
+          'Updated with detailed coordinates: ${details['lat']}, ${details['lng']}',
+        );
+      } else {
+        print('Failed to get place details for: ${prediction.description}');
+      }
+    } else {
+      print('No place_id available, using basic prediction data');
     }
+
+    _drawRoute();
   }
 
   void _getFare() {
@@ -188,6 +222,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (response.statusCode == 200) {
       final List drivers = jsonDecode(response.body);
+      List<Map<String, dynamic>> driversWithDistance = [];
+
       for (var driver in drivers) {
         final lat = driver['latitude'];
         final lng = driver['longitude'];
@@ -195,37 +231,34 @@ class _HomeScreenState extends State<HomeScreen> {
         final driverLat = lat is String ? double.tryParse(lat) : lat;
         final driverLng = lng is String ? double.tryParse(lng) : lng;
         if (driverLat == null || driverLng == null) continue;
+
         final distance = _calculateDistance(
           pickupLocation.latitude,
           pickupLocation.longitude,
           driverLat,
           driverLng,
         );
+
         print('Driver: ${driver['name']}, Lat: $driverLat, Lng: $driverLng');
         print('Distance to pickup: $distance km');
+
+        // Add distance to driver data
+        Map<String, dynamic> driverWithDistance = Map<String, dynamic>.from(
+          driver,
+        );
+        driverWithDistance['distance'] = distance;
+        driversWithDistance.add(driverWithDistance);
       }
-      // Filter drivers by proximity (e.g., within 5km)
-      final filtered =
-          drivers.where((driver) {
-            final lat = driver['latitude'];
-            final lng = driver['longitude'];
-            if (lat == null || lng == null) return false;
-            final driverLat = lat is String ? double.tryParse(lat) : lat;
-            final driverLng = lng is String ? double.tryParse(lng) : lng;
-            if (driverLat == null || driverLng == null) return false;
-            final distance = _calculateDistance(
-              pickupLocation.latitude,
-              pickupLocation.longitude,
-              driverLat,
-              driverLng,
-            );
-            return distance <= 5.0; // 5 km radius
-          }).toList();
-      print('Filtered drivers: $filtered'); // Debug print
+
+      // Sort drivers by distance (closest to farthest)
+      driversWithDistance.sort(
+        (a, b) => (a['distance'] as double).compareTo(b['distance'] as double),
+      );
+
+      print('Sorted drivers by distance: $driversWithDistance'); // Debug print
       setState(() {
-        _availableDrivers = List<Map<String, dynamic>>.from(filtered);
+        _availableDrivers = driversWithDistance;
       });
-      // Removed automatic dialog here
     }
   }
 
@@ -254,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_availableDrivers.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
+      ).showSnackBar(const SnackBar(content: Text('No drivers available.')));
       return;
     }
     final selected = await showDialog<Map<String, dynamic>>(
@@ -264,15 +297,71 @@ class _HomeScreenState extends State<HomeScreen> {
           title: const Text('Select a Driver'),
           content: SizedBox(
             width: double.maxFinite,
+            height: 400,
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: _availableDrivers.length,
               itemBuilder: (context, index) {
                 final driver = _availableDrivers[index];
+                final distance = driver['distance'] as double?;
+                final isTooFar = distance != null && distance >= 3.0;
+
                 return ListTile(
-                  title: Text(driver['name'] ?? 'Unknown'),
-                  subtitle: Text('Phone: ${driver['phone']}'),
-                  onTap: () => Navigator.of(context).pop(driver),
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        isTooFar
+                            ? Colors.orange
+                            : (index == 0 ? Colors.green : Colors.blue),
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    driver['name'] ?? 'Unknown',
+                    style: TextStyle(
+                      color: isTooFar ? Colors.orange[800] : null,
+                      fontWeight: isTooFar ? FontWeight.bold : null,
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Phone: ${driver['phone']}',
+                        style: TextStyle(
+                          color: isTooFar ? Colors.orange[600] : null,
+                        ),
+                      ),
+                      if (distance != null)
+                        Text(
+                          isTooFar
+                              ? 'Distance: ${distance.toStringAsFixed(2)} km - Far away (selectable)'
+                              : 'Distance: ${distance.toStringAsFixed(2)} km',
+                          style: TextStyle(
+                            color:
+                                isTooFar
+                                    ? Colors.orange
+                                    : (index == 0
+                                        ? Colors.green
+                                        : Colors.grey[600]),
+                            fontWeight:
+                                isTooFar
+                                    ? FontWeight.bold
+                                    : (index == 0
+                                        ? FontWeight.bold
+                                        : FontWeight.normal),
+                          ),
+                        ),
+                    ],
+                  ),
+                  onTap:
+                      () => Navigator.of(
+                        context,
+                      ).pop(driver), // Allow selecting any driver
                 );
               },
             ),
@@ -291,71 +380,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _bookRide() async {
     print('Book ride function called');
-    if (_selectedDriver == null) {
-      print('No driver selected, fetching drivers...');
-      if (_stops.isEmpty || _stops.first.prediction == null) {
-        print('Returning early: No pickup location selected!');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a pickup location.')),
-        );
-        return;
-      }
-      final pickupLat = double.tryParse(_stops.first.prediction!.lat ?? '');
-      final pickupLng = double.tryParse(_stops.first.prediction!.lng ?? '');
-      if (pickupLat == null || pickupLng == null) {
-        print('Returning early: Invalid pickup coordinates!');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid pickup location.')),
-        );
-        return;
-      }
-      await _fetchAvailableDrivers(LatLng(pickupLat, pickupLng));
-      if (_availableDrivers.isEmpty) {
-        print('Returning early: No drivers nearby after fetch.');
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('No drivers nearby.')));
-        return;
-      }
-      print(
-        'Showing driver selection dialog with ${_availableDrivers.length} drivers',
+
+    // Check if we have valid locations first
+    if (_stops.isEmpty || _stops.first.prediction == null) {
+      print('Returning early: No pickup location selected!');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a pickup location.')),
       );
-      final selected = await showDialog<Map<String, dynamic>>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('Select a Driver'),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _availableDrivers.length,
-                itemBuilder: (context, index) {
-                  final driver = _availableDrivers[index];
-                  return ListTile(
-                    title: Text(driver['name'] ?? 'Unknown'),
-                    subtitle: Text('Phone: ${driver['phone']}'),
-                    onTap: () => Navigator.of(context).pop(driver),
-                  );
-                },
-              ),
-            ),
-          );
-        },
-      );
-      print('Dialog closed, selected: $selected');
-      if (selected != null) {
-        setState(() {
-          _selectedDriver = selected;
-        });
-        // Immediately continue booking after selecting driver
-        await _bookRide();
-        return;
-      } else {
-        print('Returning early: User cancelled driver selection.');
-        return;
-      }
+      return;
     }
+
     if (_stops.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -366,10 +400,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final pickup = _stops.first.prediction;
     final dropoff = _stops.last.prediction;
+    print('=== BOOKING DEBUG ===');
+    print('Number of stops: ${_stops.length}');
     print('Pickup prediction: $pickup');
     print('Dropoff prediction: $dropoff');
-    print('Pickup description: ${pickup?.description}');
-    print('Dropoff description: ${dropoff?.description}');
+    print('Pickup description: "${pickup?.description}"');
+    print('Dropoff description: "${dropoff?.description}"');
+    print('Pickup lat/lng: ${pickup?.lat}/${pickup?.lng}');
+    print('Dropoff lat/lng: ${dropoff?.lat}/${dropoff?.lng}');
+
     if (pickup == null || dropoff == null) {
       print('Returning early: Pickup or dropoff prediction is null.');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -377,6 +416,39 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+
+    // Ensure we have valid location strings
+    final pickupLocation = pickup.description?.trim();
+    final dropoffLocation = dropoff.description?.trim();
+
+    print('Trimmed pickup location: "$pickupLocation"');
+    print('Trimmed dropoff location: "$dropoffLocation"');
+
+    // Fallback: use controller text if prediction description is empty
+    final finalPickupLocation =
+        (pickupLocation == null || pickupLocation.isEmpty)
+            ? _controllers[0].text.trim()
+            : pickupLocation;
+    final finalDropoffLocation =
+        (dropoffLocation == null || dropoffLocation.isEmpty)
+            ? _controllers[1].text.trim()
+            : dropoffLocation;
+
+    print('Final pickup location: "$finalPickupLocation"');
+    print('Final dropoff location: "$finalDropoffLocation"');
+
+    if (finalPickupLocation.isEmpty || finalDropoffLocation.isEmpty) {
+      print('Returning early: Final pickup or dropoff location is empty.');
+      print('Final pickup location empty: ${finalPickupLocation.isEmpty}');
+      print('Final dropoff location empty: ${finalDropoffLocation.isEmpty}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select valid locations with proper addresses.'),
+        ),
+      );
+      return;
+    }
+
     final stops =
         _stops
             .sublist(1, _stops.length - 1)
@@ -388,15 +460,20 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             )
             .toList();
+
     final body = {
-      'pickup_location': pickup.description,
-      'dropoff_location': dropoff.description,
-      'scheduled_at': null, // Add scheduling if needed
+      'pickup_location': finalPickupLocation,
+      'dropoff_location': finalDropoffLocation,
+      'scheduled_at':
+          _scheduledTime?.toIso8601String(), // Add scheduling if needed
       'vehicle_type': 'standard', // Or let user choose
       'payment_method': 'cash', // Or let user choose
       'stops': stops,
-      'driver_id': _selectedDriver!['id'],
+      // Remove driver_id - let driver accept the request instead
     };
+
+    print('Sending booking request with body: ${jsonEncode(body)}');
+
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     final response = await http.post(
@@ -410,11 +487,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (response.statusCode == 200) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ride booked successfully!')),
+        const SnackBar(
+          content: Text('Ride request created! Drivers will be notified.'),
+        ),
       );
+      // Clear the selected driver since we're not assigning one immediately
+      setState(() {
+        _selectedDriver = null;
+      });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to book ride: ${response.body}')),
+        SnackBar(
+          content: Text('Failed to create ride request: ${response.body}'),
+        ),
       );
     }
   }
@@ -576,6 +661,11 @@ class _HomeScreenState extends State<HomeScreen> {
             onAddStop: _addStop,
             onGetFare: _getFare,
             onBookRide: _bookRide,
+            onScheduledTimeChanged: (time) {
+              setState(() {
+                _scheduledTime = time;
+              });
+            },
           ),
           body: GoogleMap(
             initialCameraPosition: _kGooglePlex,

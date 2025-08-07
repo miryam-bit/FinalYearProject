@@ -41,8 +41,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // Temporarily remove middleware for debugging
     // Route::get('/drivers', [App\Http\Controllers\Api\RideController::class, 'listDrivers']); // commented out for debugging
     Route::get('/driver/rides', [RideController::class, 'getDriverRides']);
+    Route::get('/driver/ride-requests', [RideController::class, 'getRideRequests']);
+    Route::post('/driver/accept-ride', [RideController::class, 'acceptRide']);
+    Route::post('/driver/reject-ride', [RideController::class, 'rejectRide']);
     Route::post('/ride/update-status', [RideController::class, 'updateRideStatus']);
     Route::post('/driver/update-location', [RideController::class, 'updateDriverLocation']);
+    Route::get('/debug/scheduled-ride', [RideController::class, 'debugScheduledRide']); // Debug route
     });
 
     // Transactions
@@ -67,4 +71,20 @@ Route::get('/drivers', [App\Http\Controllers\Api\RideController::class, 'listDri
 
 Route::get('/test', function () {
     return 'API is working';
+});
+
+// Debug route to check all rides
+Route::get('/debug/all-rides', function() {
+    $rides = \App\Models\Ride::with('user:id,name')->get()->map(function($ride) {
+        return [
+            'id' => $ride->id,
+            'driver_id' => $ride->driver_id,
+            'status' => $ride->status,
+            'scheduled_at' => $ride->scheduled_at ? $ride->scheduled_at->format('Y-m-d H:i:s') : null,
+            'pickup' => $ride->pickup_location,
+            'dropoff' => $ride->dropoff_location,
+            'customer' => $ride->user ? $ride->user->name : 'No customer'
+        ];
+    });
+    return response()->json($rides);
 });
