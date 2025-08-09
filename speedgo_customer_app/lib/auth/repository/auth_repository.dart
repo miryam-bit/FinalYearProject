@@ -81,4 +81,10 @@ class AuthRepository {
       throw Exception(responseBody['message'] ?? 'Failed to verify OTP');
     }
   }
+
+  Future<bool> isAuthenticated() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    return token != null && token.isNotEmpty;
+  }
 }

@@ -38,7 +38,11 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<Polyline> _polylines = {};
   List<Map<String, dynamic>> _availableDrivers = [];
   Map<String, dynamic>? _selectedDriver;
-  DateTime? _scheduledTime; // Add this line for scheduled rides
+  DateTime? _scheduledTime;
+
+  // Panel Controller
+  final PanelController _panelController = PanelController();
+  bool _isPanelOpen = true;
 
   // Custom Marker Icons
   BitmapDescriptor _pickupMarker = BitmapDescriptor.defaultMarker;
@@ -56,6 +60,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _setMarkerIcons();
     _addInitialStops();
     _determinePosition();
+  }
+
+  @override
+  void dispose() {
+    for (var controller in _controllers) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   void _setMarkerIcons() async {
@@ -398,6 +410,35 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+
+    // Validate scheduled time if set
+    if (_scheduledTime != null) {
+      final now = DateTime.now();
+      if (_scheduledTime!.isBefore(now)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cannot schedule rides for past times. Please select a future time.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Check if it's at least 15 minutes in the future
+      final minimumTime = now.add(const Duration(minutes: 15));
+      if (_scheduledTime!.isBefore(minimumTime)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please schedule rides at least 15 minutes in advance.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
     final pickup = _stops.first.prediction;
     final dropoff = _stops.last.prediction;
     print('=== BOOKING DEBUG ===');
@@ -461,11 +502,21 @@ class _HomeScreenState extends State<HomeScreen> {
             )
             .toList();
 
+    // Convert scheduled time to UTC before sending
+    // Since we're in UTC+3, we need to subtract 3 hours to get UTC time
+    final scheduledTimeUTC = _scheduledTime?.subtract(
+      Duration(hours: DateTime.now().timeZoneOffset.inHours),
+    );
+    print('DEBUG - Original scheduled time (local): ${_scheduledTime}');
+    print('DEBUG - Converted to UTC: ${scheduledTimeUTC}');
+
     final body = {
       'pickup_location': finalPickupLocation,
       'dropoff_location': finalDropoffLocation,
-      'scheduled_at':
-          _scheduledTime?.toIso8601String(), // Add scheduling if needed
+      'scheduled_at': scheduledTimeUTC?.toIso8601String(), // UTC time
+      'current_time': DateTime.now().toUtc().toIso8601String(), // UTC time
+      'timezone_offset':
+          DateTime.now().timeZoneOffset.inHours, // Send timezone offset
       'vehicle_type': 'standard', // Or let user choose
       'payment_method': 'cash', // Or let user choose
       'stops': stops,
@@ -476,6 +527,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
+
+    print('DEBUG - Token: ${token != null ? "Present" : "Missing"}');
+
     final response = await http.post(
       Uri.parse('http://192.168.10.60:8000/api/ride/book'),
       headers: {
@@ -485,6 +539,10 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       body: jsonEncode(body),
     );
+
+    print('DEBUG - Response status: ${response.statusCode}');
+    print('DEBUG - Response body: ${response.body}');
+
     if (response.statusCode == 200) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -495,6 +553,18 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _selectedDriver = null;
       });
+    } else if (response.statusCode == 404) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Route not found. Please check your connection.'),
+        ),
+      );
+    } else if (response.statusCode == 401) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Authentication failed. Please login again.'),
+        ),
+      );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -634,51 +704,192 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Home'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              context.read<AuthBloc>().add(LogoutRequested());
-            },
+      backgroundColor: const Color(0xFFF8F9FA),
+      appBar: _buildAppBar(),
+      body: _buildBody(),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3498DB).withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.motorcycle,
+              color: Color(0xFF3498DB),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Text(
+            'SpeedGo',
+            style: TextStyle(
+              color: Color(0xFF2C3E50),
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
-      body: BlocListener<AuthBloc, AuthState>(
-        listener: (context, state) {
-          if (state is AuthInitial) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-            );
-          }
-        },
-        child: SlidingUpPanel(
-          panel: RideBookingPanel(
-            stops: _stops,
-            controllers: _controllers,
-            onStopSelected: _onStopSelected,
-            onAddStop: _addStop,
-            onGetFare: _getFare,
-            onBookRide: _bookRide,
-            onScheduledTimeChanged: (time) {
-              setState(() {
-                _scheduledTime = time;
-              });
-            },
+      actions: [
+        IconButton(
+          onPressed: () => Navigator.pushNamed(context, '/profile'),
+          icon: const Icon(Icons.person, color: Color(0xFF3498DB), size: 20),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          onPressed: _showLogoutDialog,
+          icon: const Icon(Icons.logout, color: Color(0xFFE74C3C), size: 20),
+        ),
+      ],
+    );
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-          body: GoogleMap(
-            initialCameraPosition: _kGooglePlex,
-            onMapCreated: (GoogleMapController controller) {
-              _controller.complete(controller);
-            },
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false, // Use our own button if needed
-            markers: _markers,
-            polylines: _polylines,
+          title: const Text(
+            'Logout',
+            style: TextStyle(
+              color: Color(0xFF2C3E50),
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(color: Color(0xFF7F8C8D), fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF7F8C8D), fontSize: 16),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _logout();
+              },
+              child: const Text(
+                'Logout',
+                style: TextStyle(
+                  color: Color(0xFFE74C3C),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _logout() {
+    context.read<AuthBloc>().add(LogoutRequested());
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
+  }
+
+  Widget _buildBody() {
+    return Stack(
+      children: [
+        // Map
+        GoogleMap(
+          onMapCreated: (GoogleMapController controller) {
+            _controller.complete(controller);
+          },
+          initialCameraPosition: _kGooglePlex,
+          markers: _markers,
+          polylines: _polylines,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+        ),
+
+        // Ride Booking Panel
+        SlidingUpPanel(
+          controller: _panelController,
+          minHeight: 100,
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
+          ),
+          backdropEnabled: true,
+          backdropOpacity: 0.3,
+          backdropColor: const Color(0xFF2C3E50),
+          panel: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              children: [
+                // Panel Handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0E0E0),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+
+                // Panel Content
+                Expanded(
+                  child: RideBookingPanel(
+                    stops: _stops,
+                    controllers: _controllers,
+                    onStopSelected: _onStopSelected,
+                    onAddStop: _addStop,
+                    onGetFare: _getFare,
+                    onBookRide: _bookRide,
+                    onScheduledTimeChanged: (time) {
+                      setState(() {
+                        _scheduledTime = time;
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
+
+        // My Location Button
+        Positioned(
+          bottom: 120,
+          right: 16,
+          child: FloatingActionButton(
+            onPressed: _determinePosition,
+            backgroundColor: Colors.white,
+            child: const Icon(Icons.my_location, color: Color(0xFF3498DB)),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -35,7 +35,13 @@ class RegistrationRequested extends AuthEvent {
   });
 
   @override
-  List<Object> get props => [name, email, phone, password, passwordConfirmation];
+  List<Object> get props => [
+    name,
+    email,
+    phone,
+    password,
+    passwordConfirmation,
+  ];
 }
 
 class OtpVerificationRequested extends AuthEvent {
@@ -46,4 +52,6 @@ class OtpVerificationRequested extends AuthEvent {
 
   @override
   List<Object> get props => [phone, otp];
-} 
+}
+
+class CheckAuthStatus extends AuthEvent {}

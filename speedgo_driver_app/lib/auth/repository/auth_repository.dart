@@ -29,7 +29,31 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('token');
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+
+      if (token != null) {
+        // Call backend logout endpoint
+        final response = await http.post(
+          Uri.parse('$_baseUrl/logout'),
+          headers: <String, String>{
+            'Content-Type': 'application/json; charset=UTF-8',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        );
+
+        // Even if backend call fails, we still want to clear local token
+        print('Logout response: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      print('Logout error: $e');
+      // Continue with local logout even if backend call fails
+    } finally {
+      // Always clear local token
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('token');
+    }
   }
 }

@@ -29,7 +29,22 @@ class RideController extends Controller
         // Validate that scheduled rides are only for the same day
         if ($request->scheduled_at) {
             $scheduledDate = \Carbon\Carbon::parse($request->scheduled_at);
-            $today = \Carbon\Carbon::today();
+            
+            // Get current time from client or use server time as fallback
+            $currentTime = $request->input('current_time');
+            if ($currentTime) {
+                $now = \Carbon\Carbon::parse($currentTime);
+                $today = $now->startOfDay();
+            } else {
+                $now = now();
+                $today = \Carbon\Carbon::today();
+            }
+            
+            // Debug logging
+            \Log::info('Booking validation - Current time: ' . $now->format('Y-m-d H:i:s'));
+            \Log::info('Booking validation - Scheduled time: ' . $scheduledDate->format('Y-m-d H:i:s'));
+            \Log::info('Booking validation - Today: ' . $today->format('Y-m-d H:i:s'));
+            \Log::info('Booking validation - Same day check: ' . ($scheduledDate->isSameDay($today) ? 'Yes' : 'No'));
             
             if (!$scheduledDate->isSameDay($today)) {
                 return response()->json([
@@ -38,18 +53,24 @@ class RideController extends Controller
             }
             
             // Ensure scheduled time is in the future
-            if ($scheduledDate->isPast()) {
+            if ($scheduledDate->isBefore($now)) {
                 return response()->json([
                     'message' => 'Scheduled time must be in the future.'
                 ], 422);
             }
         }
 
+        // Time is already in UTC from the client
+        $scheduledAt = null;
+        if ($request->scheduled_at) {
+            $scheduledAt = \Carbon\Carbon::parse($request->scheduled_at);
+        }
+
         $ride = Ride::create([
             'user_id'          => Auth::id(),
             'pickup_location'  => $request->pickup_location,
             'dropoff_location' => $request->dropoff_location,
-            'scheduled_at'     => $request->scheduled_at,
+            'scheduled_at'     => $scheduledAt,
             'vehicle_type'     => $request->vehicle_type,
             'payment_method'   => $request->payment_method,
             'status'           => 'pending',
@@ -182,6 +203,8 @@ $data = $response->json();
     {
         // Get current time from client or use server time as fallback
         $currentTime = $request->input('current_time');
+        $timezoneOffset = (int) $request->input('timezone_offset', 0); // Convert to integer
+        
         if ($currentTime) {
             $now = \Carbon\Carbon::parse($currentTime);
         } else {
@@ -211,8 +234,11 @@ $data = $response->json();
             ->first();
 
         if ($scheduledRide) {
-            $timeDiff = $now->diffInMinutes($scheduledRide->scheduled_at);
+            // Convert scheduled time to local timezone for comparison
+            $localScheduledTime = $scheduledRide->scheduled_at->addHours($timezoneOffset);
+            $timeDiff = $now->diffInMinutes($localScheduledTime);
             $isWithinOneHour = $timeDiff <= 60;
+            $isPastScheduledTime = $now > $localScheduledTime;
             
             // Debug logging
             \Log::info('Driver ID: ' . Auth::id());
@@ -220,11 +246,43 @@ $data = $response->json();
             \Log::info('Scheduled ride time: ' . $scheduledRide->scheduled_at->format('Y-m-d H:i:s'));
             \Log::info('Time difference: ' . $timeDiff . ' minutes');
             \Log::info('Is within 1 hour: ' . ($isWithinOneHour ? 'Yes' : 'No'));
+            \Log::info('Is past scheduled time: ' . ($isPastScheduledTime ? 'Yes' : 'No'));
+            
+            // If scheduled time has passed, allow driver to take other rides
+            if ($isPastScheduledTime) {
+                // Continue to show ride requests - driver can take other rides
+                $pendingRides = Ride::where('status', 'pending')
+                    ->whereNull('driver_id')
+                    ->with('user:id,name,phone')
+                    ->get()
+                    ->map(function ($ride) {
+                        return [
+                            'id' => $ride->id,
+                            'pickup_location' => $ride->pickup_location,
+                            'dropoff_location' => $ride->dropoff_location,
+                            'customer_name' => $ride->user->name,
+                            'customer_phone' => $ride->user->phone,
+                            'vehicle_type' => $ride->vehicle_type,
+                            'payment_method' => $ride->payment_method,
+                            'scheduled_at' => $ride->scheduled_at,
+                            'created_at' => $ride->created_at,
+                        ];
+                    });
+
+                return response()->json([
+                    'message' => 'Available ride requests (scheduled ride time has passed)',
+                    'has_active_ride' => false,
+                    'has_scheduled_ride' => false,
+                    'can_accept_rides' => true,
+                    'ride_requests' => $pendingRides
+                ]);
+            }
             
             if ($isWithinOneHour) {
                 // Within 1 hour - block completely
-                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
-                $direction = $scheduledRide->scheduled_at > $now ? 'in' : 'ago';
+                $localScheduledTime = $scheduledRide->scheduled_at->addHours($timezoneOffset);
+                $scheduledTime = $localScheduledTime->format('h:i A');
+                $direction = $localScheduledTime > $now ? 'in' : 'ago';
                 
                 return response()->json([
                     'message' => "You have a scheduled ride at $scheduledTime ($timeDiff minutes $direction). You cannot accept new rides within 1 hour of your scheduled ride.",
@@ -236,7 +294,8 @@ $data = $response->json();
                 ], 403);
             } else {
                 // More than 1 hour away - allow access but show warning
-                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
+                $localScheduledTime = $scheduledRide->scheduled_at->addHours($timezoneOffset);
+                $scheduledTime = $localScheduledTime->format('h:i A');
                 $hoursAway = floor($timeDiff / 60);
                 $minutesAway = $timeDiff % 60;
                 $timeString = $hoursAway > 0 ? "$hoursAway hours $minutesAway minutes" : "$minutesAway minutes";
@@ -308,6 +367,8 @@ $data = $response->json();
 
         // Get current time from client or use server time as fallback
         $currentTime = $request->input('current_time');
+        $timezoneOffset = (int) $request->input('timezone_offset', 0); // Convert to integer
+        
         if ($currentTime) {
             $now = \Carbon\Carbon::parse($currentTime);
         } else {
@@ -333,13 +394,20 @@ $data = $response->json();
             ->first();
 
         if ($scheduledRide) {
-            $timeDiff = $now->diffInMinutes($scheduledRide->scheduled_at);
+            // Convert scheduled time to local timezone for comparison
+            $localScheduledTime = $scheduledRide->scheduled_at->addHours($timezoneOffset);
+            $timeDiff = $now->diffInMinutes($localScheduledTime);
             $isWithinOneHour = $timeDiff <= 60;
+            $isPastScheduledTime = $now > $localScheduledTime;
             
-            if ($isWithinOneHour) {
+            // If scheduled time has passed, allow driver to take other rides
+            if ($isPastScheduledTime) {
+                // Allow accepting new rides
+            } else if ($isWithinOneHour) {
                 // Within 1 hour - block accepting new rides
-                $scheduledTime = $scheduledRide->scheduled_at->format('H:i');
-                $direction = $scheduledRide->scheduled_at > $now ? 'in' : 'ago';
+                $localScheduledTime = $scheduledRide->scheduled_at->addHours($timezoneOffset);
+                $scheduledTime = $localScheduledTime->format('h:i A');
+                $direction = $localScheduledTime > $now ? 'in' : 'ago';
                 
                 return response()->json([
                     'message' => "You have a scheduled ride at $scheduledTime ($timeDiff minutes $direction). You cannot accept new rides within 1 hour of your scheduled ride."
@@ -394,7 +462,7 @@ $data = $response->json();
     {
         $driverId = Auth::id();
         $rides = Ride::where('driver_id', $driverId)
-            ->whereIn('status', ['accepted', 'in_progress']) // Only active rides
+            ->whereIn('status', ['accepted', 'in_progress']) // Only active rides, exclude completed/cancelled
             ->with('user:id,name,phone') // Include customer info
             ->orderBy('created_at', 'desc')
             ->get()
@@ -412,7 +480,34 @@ $data = $response->json();
                     'created_at' => $ride->created_at,
                 ];
             });
-        return response()->json($rides);
+        return response()->json(['rides' => $rides]);
+    }
+
+    // Get ride history for the driver (including completed and cancelled rides)
+    public function getDriverRideHistory(Request $request)
+    {
+        $driverId = Auth::id();
+        $rides = Ride::where('driver_id', $driverId)
+            ->whereIn('status', ['completed', 'cancelled']) // Only completed and cancelled rides
+            ->with('user:id,name,phone') // Include customer info
+            ->orderBy('created_at', 'desc')
+            ->limit(20) // Limit to last 20 rides
+            ->get()
+            ->map(function ($ride) {
+                return [
+                    'id' => $ride->id,
+                    'pickup_location' => $ride->pickup_location,
+                    'dropoff_location' => $ride->dropoff_location,
+                    'customer_name' => $ride->user->name,
+                    'customer_phone' => $ride->user->phone,
+                    'status' => $ride->status,
+                    'vehicle_type' => $ride->vehicle_type,
+                    'payment_method' => $ride->payment_method,
+                    'scheduled_at' => $ride->scheduled_at,
+                    'created_at' => $ride->created_at,
+                ];
+            });
+        return response()->json(['rides' => $rides]);
     }
 
     // Update the status of a ride assigned to the driver
@@ -432,10 +527,32 @@ $data = $response->json();
                 return response()->json(['message' => 'Ride not found or not assigned to this driver'], 404);
             }
 
+            // Check if trying to start a scheduled ride before its time
+            if ($request->status === 'in_progress' && $ride->scheduled_at) {
+                // Get current time from client or use server time as fallback
+                $currentTime = $request->input('current_time');
+                if ($currentTime) {
+                    $now = \Carbon\Carbon::parse($currentTime);
+                } else {
+                    $now = now();
+                }
+
+                if ($now < $ride->scheduled_at) {
+                    $scheduledTime = $ride->scheduled_at->format('h:i A');
+                    $currentTimeFormatted = $now->format('h:i A');
+                    $timeDiff = $now->diffInMinutes($ride->scheduled_at);
+                    
+                    return response()->json([
+                        'message' => "Cannot start scheduled ride yet. Scheduled for $scheduledTime (current time: $currentTimeFormatted, $timeDiff minutes remaining)."
+                    ], 400);
+                }
+            }
+
             // Validate status transitions
             $allowedTransitions = [
-                'accepted' => ['in_progress'],
+                'accepted' => ['in_progress', 'cancelled'],
                 'in_progress' => ['completed'],
+                'pending' => ['accepted', 'cancelled'],
             ];
 
             if (isset($allowedTransitions[$ride->status]) && !in_array($request->status, $allowedTransitions[$ride->status])) {
@@ -447,6 +564,9 @@ $data = $response->json();
             $oldStatus = $ride->status;
             $ride->status = $request->status;
             $ride->save();
+
+            // Log the status change for debugging
+            \Log::info("Ride status updated - ID: {$ride->id}, Driver: " . Auth::id() . ", From: $oldStatus, To: {$request->status}");
 
             return response()->json([
                 'message' => 'Ride status updated from ' . $oldStatus . ' to ' . $request->status,

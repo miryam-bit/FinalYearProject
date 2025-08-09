@@ -50,5 +50,18 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(AuthFailure(e.toString()));
       }
     });
+
+    on<CheckAuthStatus>((event, emit) async {
+      try {
+        final isAuthenticated = await authRepository.isAuthenticated();
+        if (isAuthenticated) {
+          emit(AuthSuccess());
+        } else {
+          emit(AuthFailure('Not authenticated'));
+        }
+      } catch (e) {
+        emit(AuthFailure(e.toString()));
+      }
+    });
   }
 } 
